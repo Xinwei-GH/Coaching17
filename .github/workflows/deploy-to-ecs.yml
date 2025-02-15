@@ -43,25 +43,46 @@ jobs:
     - name: Initialize Terraform
       run: terraform init
 
-    # Check if IAM Role is already imported in Terraform State
+    # Import IAM Role if Not Exists
     - name: Import IAM Role if Not Exists
       run: |
+        IAM_ROLE_NAME=${{ vars.ECS_TASK_EXECUTION_ROLE }}
+
+        # Check if IAM role exists in Terraform state
         if ! terraform state list | grep -q "aws_iam_role.ecs_task_execution_role"; then
           echo "IAM Role not found in Terraform state. Importing..."
-          terraform import aws_iam_role.ecs_task_execution_role $ECS_TASK_EXECUTION_ROLE
+          
+          # Import IAM role using correct syntax
+          terraform import aws_iam_role.ecs_task_execution_role "$IAM_ROLE_NAME"
         else
           echo "IAM Role already exists in Terraform state. Skipping import."
+        fi
+
+    # Import ECR Repository if Not Exists
+    - name: Import ECR Repository if Not Exists
+      run: |
+        ECR_REPO_NAME=${{ vars.ECR_REPOSITORY }}
+
+        # Check if ECR repository exists in Terraform state
+        if ! terraform state list | grep -q "aws_ecr_repository.ecr"; then
+          echo "ECR Repository not found in Terraform state. Importing..."
+          
+          # Import ECR repository using correct syntax
+          terraform import aws_ecr_repository.ecr "$ECR_REPO_NAME"
+        else
+          echo "ECR Repository already exists in Terraform state. Skipping import."
         fi
 
     - name: Apply Terraform Changes
       run: terraform apply -auto-approve
 
-    # Capture Terraform Outputs for Subnets and Security Group
+    # Capture Terraform Outputs for Subnets, Security Group, and Task Definition
     - name: Capture Terraform Outputs
       run: |
         echo "SUBNET_1=$(terraform output -raw subnet_1)" >> $GITHUB_ENV
         echo "SUBNET_2=$(terraform output -raw subnet_2)" >> $GITHUB_ENV
         echo "SECURITY_GROUP=$(terraform output -raw security_group)" >> $GITHUB_ENV
+        echo "TASK_DEF=$(terraform output -raw ecs_task_definition)" >> $GITHUB_ENV
 
     - name: Login to Amazon ECR
       id: login-ecr
