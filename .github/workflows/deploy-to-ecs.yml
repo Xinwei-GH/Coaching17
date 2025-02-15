@@ -76,13 +76,13 @@ jobs:
     - name: Apply Terraform Changes
       run: terraform apply -auto-approve
 
-    # Capture Terraform Outputs for Subnets, Security Group, and Task Definition
+    # Capture Terraform Outputs (Fixed Format Issue)
     - name: Capture Terraform Outputs
       run: |
-        echo "SUBNET_1=$(terraform output -raw subnet_1)" >> $GITHUB_ENV
-        echo "SUBNET_2=$(terraform output -raw subnet_2)" >> $GITHUB_ENV
-        echo "SECURITY_GROUP=$(terraform output -raw security_group)" >> $GITHUB_ENV
-        echo "TASK_DEF=$(terraform output -raw ecs_task_definition)" >> $GITHUB_ENV
+        echo "SUBNET_1=$(terraform output subnet_1 | tr -d '\r' | tr -d '\n')" >> $GITHUB_ENV
+        echo "SUBNET_2=$(terraform output subnet_2 | tr -d '\r' | tr -d '\n')" >> $GITHUB_ENV
+        echo "SECURITY_GROUP=$(terraform output security_group | tr -d '\r' | tr -d '\n')" >> $GITHUB_ENV
+        echo "TASK_DEF=$(terraform output ecs_task_definition | tr -d '\r' | tr -d '\n')" >> $GITHUB_ENV
 
     - name: Login to Amazon ECR
       id: login-ecr

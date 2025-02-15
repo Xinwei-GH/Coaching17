@@ -13,9 +13,9 @@ data "aws_ecr_repository" "existing_ecr" {
   name = "${local.prefix}-ecr"
 }
 
-# Create an ECR repository if it doesn't exist
+# Create ECR repository only if it doesn't exist
 resource "aws_ecr_repository" "ecr" {
-  count = length(data.aws_ecr_repository.existing_ecr.id) > 0 ? 0 : 1
+  count = length(data.aws_ecr_repository.existing_ecr.repository_url) > 0 ? 0 : 1
 
   name         = "${local.prefix}-ecr"
   force_delete = true
@@ -51,7 +51,7 @@ resource "aws_iam_role" "ecs_task_execution_role" {
   })
 
   lifecycle {
-    prevent_destroy = true
+    prevent_destroy = true  # Prevent accidental deletion
   }
 }
 
@@ -190,4 +190,25 @@ module "ecs" {
       security_group_ids             = [aws_security_group.xinwei_ecs_sg.id]
     }
   }
+}
+
+# Outputs for GitHub Actions
+output "subnet_1" {
+  value       = aws_subnet.xinwei_public_subnet_1.id
+  description = "First Public Subnet ID"
+}
+
+output "subnet_2" {
+  value       = aws_subnet.xinwei_public_subnet_2.id
+  description = "Second Public Subnet ID"
+}
+
+output "security_group" {
+  value       = aws_security_group.xinwei_ecs_sg.id
+  description = "ECS Security Group ID"
+}
+
+output "ecs_task_execution_role" {
+  value       = aws_iam_role.ecs_task_execution_role[0].name
+  description = "IAM Role for ECS Task Execution"
 }
