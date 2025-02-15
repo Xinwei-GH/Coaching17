@@ -14,13 +14,13 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      AWS_REGION: ${{ secrets.AWS_REGION }}  # AWS region
-      ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}  # Amazon ECR repo name
-      ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}  # Amazon ECS Cluster Name
-      ECS_SERVICE: ${{ vars.ECS_SERVICE }}  # ECS Service Name
-      TASK_DEF: ${{ vars.TASK_DEF }}  # Task Definition Name
-      CONTAINER_NAME: ${{ vars.CONTAINER_NAME }}  # Container Name in Task Definition
-      ECS_TASK_EXECUTION_ROLE: ${{ vars.ECS_TASK_EXECUTION_ROLE }}  # IAM Role Name
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+      ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+      ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
+      ECS_SERVICE: ${{ vars.ECS_SERVICE }}
+      TASK_DEF: ${{ vars.TASK_DEF }}
+      CONTAINER_NAME: ${{ vars.CONTAINER_NAME }}
+      ECS_TASK_EXECUTION_ROLE: ${{ vars.ECS_TASK_EXECUTION_ROLE }}
 
     steps:
 
@@ -34,7 +34,6 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ secrets.AWS_REGION }}
 
-    # Terraform Setup
     - name: Setup Terraform
       uses: hashicorp/setup-terraform@v2
       with:
@@ -43,53 +42,50 @@ jobs:
     - name: Initialize Terraform
       run: terraform init
 
-    # Import IAM Role if Not Exists
     - name: Import IAM Role if Not Exists
       run: |
         IAM_ROLE_NAME=${{ vars.ECS_TASK_EXECUTION_ROLE }}
+        IAM_ROLE_ARN=$(aws iam get-role --role-name "$IAM_ROLE_NAME" --query "Role.Arn" --output text || echo "")
 
-        # Check if IAM role exists in Terraform state
-        if ! terraform state list | grep -q "aws_iam_role.ecs_task_execution_role"; then
-          echo "IAM Role not found in Terraform state. Importing..."
-          
-          # Import IAM role using correct syntax
-          terraform import aws_iam_role.ecs_task_execution_role "$IAM_ROLE_NAME"
+        if [ -z "$IAM_ROLE_ARN" ]; then
+          echo "IAM Role not found in AWS. Skipping import."
         else
-          echo "IAM Role already exists in Terraform state. Skipping import."
+          if ! terraform state list | grep -q "aws_iam_role.ecs_task_execution_role"; then
+            terraform import aws_iam_role.ecs_task_execution_role "$IAM_ROLE_ARN"
+          fi
         fi
 
-    # Import ECR Repository if Not Exists
     - name: Import ECR Repository if Not Exists
       run: |
         ECR_REPO_NAME=${{ vars.ECR_REPOSITORY }}
+        ECR_REPO_ARN=$(aws ecr describe-repositories --repository-names "$ECR_REPO_NAME" --query "repositories[0].repositoryArn" --output text || echo "")
 
-        # Check if ECR repository exists in Terraform state
-        if ! terraform state list | grep -q "aws_ecr_repository.ecr"; then
-          echo "ECR Repository not found in Terraform state. Importing..."
-          
-          # Import ECR repository using correct syntax
-          terraform import aws_ecr_repository.ecr "$ECR_REPO_NAME"
+        if [ -z "$ECR_REPO_ARN" ]; then
+          echo "ECR Repository not found in AWS. Skipping import."
         else
-          echo "ECR Repository already exists in Terraform state. Skipping import."
+          if ! terraform state list | grep -q "aws_ecr_repository.ecr"; then
+            terraform import aws_ecr_repository.ecr "$ECR_REPO_ARN"
+          fi
         fi
 
-    - name: Apply Terraform Changes
-      run: terraform apply -auto-approve
+    - name: Plan Terraform Changes
+      run: terraform plan -out=tfplan
 
-    # Capture Terraform Outputs (Fixed Format Issue)
+    - name: Apply Terraform Changes
+      run: terraform apply -auto-approve tfplan
+
     - name: Capture Terraform Outputs
       run: |
-        echo "SUBNET_1=$(terraform output subnet_1 | tr -d '\r' | tr -d '\n')" >> $GITHUB_ENV
-        echo "SUBNET_2=$(terraform output subnet_2 | tr -d '\r' | tr -d '\n')" >> $GITHUB_ENV
-        echo "SECURITY_GROUP=$(terraform output security_group | tr -d '\r' | tr -d '\n')" >> $GITHUB_ENV
-        echo "TASK_DEF=$(terraform output ecs_task_definition | tr -d '\r' | tr -d '\n')" >> $GITHUB_ENV
+        echo "SUBNET_1=$(terraform output -json subnet_1 | jq -r .)" >> $GITHUB_ENV
+        echo "SUBNET_2=$(terraform output -json subnet_2 | jq -r .)" >> $GITHUB_ENV
+        echo "SECURITY_GROUP=$(terraform output -json security_group | jq -r .)" >> $GITHUB_ENV
+        echo "TASK_DEF=$(terraform output -json ecs_task_definition | jq -r .)" >> $GITHUB_ENV
 
     - name: Login to Amazon ECR
       id: login-ecr
       uses: aws-actions/amazon-ecr-login@v1
 
-    - name: Build and Push Docker Image to Amazon ECR
-      id: build-image
+    - name: Build and Push Docker Image
       uses: docker/build-push-action@v6
       with:
         context: .
@@ -97,25 +93,11 @@ jobs:
         tags: |
           ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
           ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
-        platforms: linux/amd64
-        provenance: false
-
-    - name: Download Current Task Definition
-      run: |
-        aws ecs describe-task-definition --task-definition ${{ env.TASK_DEF }} --query taskDefinition > task-definition.json
-
-    - name: Update Task Definition with New Image
-      id: task-def
-      uses: aws-actions/amazon-ecs-render-task-definition@v1
-      with:
-        task-definition: task-definition.json
-        container-name: ${{ env.CONTAINER_NAME }}
-        image: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
 
     - name: Deploy Updated Task Definition to ECS
       uses: aws-actions/amazon-ecs-deploy-task-definition@v1
       with:
-        task-definition: ${{ steps.task-def.outputs.task-definition }}
+        task-definition: ${{ env.TASK_DEF }}
         service: ${{ env.ECS_SERVICE }}
         cluster: ${{ env.ECS_CLUSTER }}
         wait-for-service-stability: true
