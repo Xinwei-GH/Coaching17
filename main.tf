@@ -21,8 +21,8 @@ resource "aws_ecr_repository" "ecr" {
   force_delete = true
 
   lifecycle {
-    prevent_destroy = true  # Prevent accidental deletion
-    ignore_changes  = [name]  # Ignore name changes to prevent conflicts
+    prevent_destroy = true
+    ignore_changes  = [name]
   }
 }
 
@@ -51,7 +51,7 @@ resource "aws_iam_role" "ecs_task_execution_role" {
   })
 
   lifecycle {
-    prevent_destroy = true  # Prevent accidental deletion
+    prevent_destroy = true
   }
 }
 
@@ -190,25 +190,4 @@ module "ecs" {
       security_group_ids             = [aws_security_group.xinwei_ecs_sg.id]
     }
   }
-}
-
-# Outputs for GitHub Actions
-output "subnet_1" {
-  value       = aws_subnet.xinwei_public_subnet_1.id
-  description = "First Public Subnet ID"
-}
-
-output "subnet_2" {
-  value       = aws_subnet.xinwei_public_subnet_2.id
-  description = "Second Public Subnet ID"
-}
-
-output "security_group" {
-  value       = aws_security_group.xinwei_ecs_sg.id
-  description = "ECS Security Group ID"
-}
-
-output "ecs_task_execution_role" {
-  value       = aws_iam_role.ecs_task_execution_role[0].name
-  description = "IAM Role for ECS Task Execution"
 }
