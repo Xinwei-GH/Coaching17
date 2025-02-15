@@ -1,0 +1,89 @@
+name: Deploy to Amazon ECS
+
+on:
+  push:
+    branches:
+      - main  # Triggers deployment on push to main branch
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Build, Push & Deploy to ECS
+    runs-on: ubuntu-latest
+
+    env:
+      AWS_REGION: ${{ secrets.AWS_REGION }}  # AWS region
+      ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}  # Amazon ECR repo name
+      ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}  # Amazon ECS Cluster Name
+      ECS_SERVICE: ${{ vars.ECS_SERVICE }}  # ECS Service Name
+      TASK_DEF: ${{ vars.TASK_DEF }}  # Task Definition Name
+      CONTAINER_NAME: ${{ vars.CONTAINER_NAME }}  # Container Name in Task Definition
+
+    steps:
+
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_REGION }}
+
+    # Run Terraform to provision or update infrastructure
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v2
+      with:
+        terraform_version: 1.4.6
+
+    - name: Initialize Terraform
+      run: terraform init
+
+    - name: Apply Terraform Changes
+      run: terraform apply -auto-approve
+
+    # Capture Terraform outputs and set them as environment variables
+    - name: Capture Terraform Outputs
+      run: |
+        echo "SUBNET_1=$(terraform output -raw subnet_1)" >> $GITHUB_ENV
+        echo "SUBNET_2=$(terraform output -raw subnet_2)" >> $GITHUB_ENV
+        echo "SECURITY_GROUP=$(terraform output -raw security_group)" >> $GITHUB_ENV
+
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v1
+
+    - name: Build and Push Docker Image to Amazon ECR
+      id: build-image
+      uses: docker/build-push-action@v6
+      with:
+        context: .
+        push: true
+        tags: |
+          ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+          ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
+        platforms: linux/amd64
+        provenance: false
+
+    - name: Download Current Task Definition
+      run: |
+        aws ecs describe-task-definition --task-definition ${{ env.TASK_DEF }} --query taskDefinition > task-definition.json
+
+    - name: Update Task Definition with New Image
+      id: task-def
+      uses: aws-actions/amazon-ecs-render-task-definition@v1
+      with:
+        task-definition: task-definition.json
+        container-name: ${{ env.CONTAINER_NAME }}
+        image: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+
+    - name: Deploy Updated Task Definition to ECS
+      uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+      with:
+        task-definition: ${{ steps.task-def.outputs.task-definition }}
+        service: ${{ env.ECS_SERVICE }}
+        cluster: ${{ env.ECS_CLUSTER }}
+        wait-for-service-stability: true
