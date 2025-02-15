@@ -29,7 +29,7 @@ output "ecs_service_name" {
 }
 
 output "ecs_task_definition" {
-  value       = module.ecs.services["xinwei-service"].task_definition_arn
+  value       = try(module.ecs.services["xinwei-service"].task_definition_arn, "")
   description = "ECS Task Definition ARN"
 }
 

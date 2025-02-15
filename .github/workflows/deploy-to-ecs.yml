@@ -42,6 +42,27 @@ jobs:
     - name: Initialize Terraform
       run: terraform init
 
+    # Ensure ECR Repository Exists Before Running Terraform
+    - name: Check and Create ECR Repository if Missing
+      run: |
+        if ! aws ecr describe-repositories --repository-names ${{ vars.ECR_REPOSITORY }} > /dev/null 2>&1; then
+          echo "ECR Repository does not exist. Creating it now..."
+          aws ecr create-repository --repository-name ${{ vars.ECR_REPOSITORY }}
+        else
+          echo "ECR Repository already exists."
+        fi
+
+    # Import ECS Service if it already exists to avoid duplicate creation
+    - name: Import ECS Service if Exists
+      run: |
+        if aws ecs describe-services --cluster ${{ env.ECS_CLUSTER }} --services ${{ env.ECS_SERVICE }} | grep -q "serviceName"; then
+          echo "ECS Service already exists. Importing into Terraform state..."
+          terraform import aws_ecs_service.xinwei-service ${{ env.ECS_CLUSTER }}/${{ env.ECS_SERVICE }}
+        else
+          echo "ECS Service does not exist. Terraform will create it."
+        fi
+
+    # Import IAM Role if Not Exists
     - name: Import IAM Role if Not Exists
       run: |
         IAM_ROLE_NAME=${{ vars.ECS_TASK_EXECUTION_ROLE }}
@@ -51,20 +72,8 @@ jobs:
           echo "IAM Role not found in AWS. Skipping import."
         else
           if ! terraform state list | grep -q "aws_iam_role.ecs_task_execution_role"; then
+            echo "IAM Role found in AWS. Importing..."
             terraform import aws_iam_role.ecs_task_execution_role "$IAM_ROLE_ARN"
-          fi
-        fi
-
-    - name: Import ECR Repository if Not Exists
-      run: |
-        ECR_REPO_NAME=${{ vars.ECR_REPOSITORY }}
-        ECR_REPO_ARN=$(aws ecr describe-repositories --repository-names "$ECR_REPO_NAME" --query "repositories[0].repositoryArn" --output text || echo "")
-
-        if [ -z "$ECR_REPO_ARN" ]; then
-          echo "ECR Repository not found in AWS. Skipping import."
-        else
-          if ! terraform state list | grep -q "aws_ecr_repository.ecr"; then
-            terraform import aws_ecr_repository.ecr "$ECR_REPO_ARN"
           fi
         fi
 
@@ -74,6 +83,7 @@ jobs:
     - name: Apply Terraform Changes
       run: terraform apply -auto-approve tfplan
 
+    # Capture Terraform Outputs
     - name: Capture Terraform Outputs
       run: |
         echo "SUBNET_1=$(terraform output -json subnet_1 | jq -r .)" >> $GITHUB_ENV
@@ -93,6 +103,14 @@ jobs:
         tags: |
           ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
           ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
+
+    - name: Register New ECS Task Definition
+      id: task-def
+      run: |
+        aws ecs describe-task-definition --task-definition ${{ env.TASK_DEF }} --query taskDefinition > task-definition.json
+
+        aws ecs register-task-definition --cli-input-json file://task-definition.json \
+          --container-definitions '[{"name":"${{ env.CONTAINER_NAME }}","image":"${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}"}]'
 
     - name: Deploy Updated Task Definition to ECS
       uses: aws-actions/amazon-ecs-deploy-task-definition@v1
