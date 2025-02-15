@@ -20,6 +20,7 @@ jobs:
       ECS_SERVICE: ${{ vars.ECS_SERVICE }}  # ECS Service Name
       TASK_DEF: ${{ vars.TASK_DEF }}  # Task Definition Name
       CONTAINER_NAME: ${{ vars.CONTAINER_NAME }}  # Container Name in Task Definition
+      ECS_TASK_EXECUTION_ROLE: ${{ vars.ECS_TASK_EXECUTION_ROLE }}  # IAM Role Name
 
     steps:
 
@@ -33,7 +34,7 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ secrets.AWS_REGION }}
 
-    # Run Terraform to provision or update infrastructure
+    # Terraform Setup
     - name: Setup Terraform
       uses: hashicorp/setup-terraform@v2
       with:
@@ -42,10 +43,20 @@ jobs:
     - name: Initialize Terraform
       run: terraform init
 
+    # Check if IAM Role is already imported in Terraform State
+    - name: Import IAM Role if Not Exists
+      run: |
+        if ! terraform state list | grep -q "aws_iam_role.ecs_task_execution_role"; then
+          echo "IAM Role not found in Terraform state. Importing..."
+          terraform import aws_iam_role.ecs_task_execution_role $ECS_TASK_EXECUTION_ROLE
+        else
+          echo "IAM Role already exists in Terraform state. Skipping import."
+        fi
+
     - name: Apply Terraform Changes
       run: terraform apply -auto-approve
 
-    # Capture Terraform outputs and set them as environment variables
+    # Capture Terraform Outputs for Subnets and Security Group
     - name: Capture Terraform Outputs
       run: |
         echo "SUBNET_1=$(terraform output -raw subnet_1)" >> $GITHUB_ENV
